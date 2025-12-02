@@ -125,7 +125,7 @@ function App() {
             </button>
           </div>
           <p className="hint">
-            Pro tip: use this as <strong>{MODE_LABELS[mode]}</strong> time. Put your phone away ✨
+            Pro tip: use this as <strong>{MODE_LABELS[mode]}</strong> time.
           </p>
         </div>
 
