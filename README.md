@@ -38,3 +38,43 @@ Verify your versions:
 python --version
 node --version
 npm --version
+
+## Installation
+
+### Clone the repo
+
+```bash
+git clone https://github.com/vidhya-kewale/AIAm-Focus-Timer.git
+cd AIAm-Focus-Timer
+```
+
+### Install React dependencies
+
+```bash
+cd ui
+npm install
+```
+
+### Build the React app
+
+```bash
+npm run build
+```
+
+This outputs the production build to `ui/build/`.
+
+### Return to project root
+
+```bash
+cd ..
+```
+
+---
+
+## Running the Timer
+
+From the project root:
+
+```bash
+python focus_timer.py
+```
