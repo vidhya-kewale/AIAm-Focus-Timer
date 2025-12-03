@@ -13,6 +13,16 @@ const MODE_LABELS = {
   longBreak: "Long Break",
 };
 
+// 🔁 Default pattern: focus → short break → focus → short break → focus → long break
+const DEFAULT_PATTERN = [
+  "focus",
+  "shortBreak",
+  "focus",
+  "shortBreak",
+  "focus",
+  "longBreak",
+];
+
 function formatTime(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -20,16 +30,82 @@ function formatTime(totalSeconds) {
 }
 
 function App() {
-  // 🧠 React tip: keep a single source of truth for important state.
-  // Here, `mode`, `secondsLeft`, and `isRunning` control most of the UI.
-  const [mode, setMode] = useState("focus");
-  const [durations, setDurations] = useState(DEFAULT_DURATIONS);
-  const [secondsLeft, setSecondsLeft] = useState(DEFAULT_DURATIONS.focus * 60);
-  const [isRunning, setIsRunning] = useState(false);
-  const intervalRef = useRef(null);
+  const [pattern, setPattern] = useState(DEFAULT_PATTERN);
+  const [patternInput, setPatternInput] = useState(DEFAULT_PATTERN.join(", "));
+  const [stepIndex, setStepIndex] = useState(0); // index into pattern
 
-  // React tip: when something should happen "over time" (like a timer),
-  // use useEffect + setInterval, and always clean up the interval.
+  const [mode, setMode] = useState(pattern[0] || "focus");
+  const [durations, setDurations] = useState(DEFAULT_DURATIONS);
+  const [secondsLeft, setSecondsLeft] = useState(
+    DEFAULT_DURATIONS[pattern[0]] * 60
+  );
+  const [isRunning, setIsRunning] = useState(false);
+
+  // ✅ Counts
+  const [focusSessionsCompleted, setFocusSessionsCompleted] = useState(0); // individual focus blocks
+  const [cyclesCompleted, setCyclesCompleted] = useState(0); // full pattern completions
+
+  const intervalRef = useRef(null);
+  const previousModeRef = useRef(mode);
+
+  // 🔊 End-of-session beep (kept short and simple)
+  const playEndBeep = () => {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.35);
+  };
+
+  // 🌿 Calm sound for entering a break
+  const playBreakSound = () => {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(520, ctx.currentTime); // soft mid tone
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.5);
+  };
+
+  // 🌱 Calm sound for entering a focus session
+  const playFocusSound = () => {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(420, ctx.currentTime); // slightly lower, grounding
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.6);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.6);
+  };
+
+  // 🎯 Timer effect with automatic pattern progression
   useEffect(() => {
     if (!isRunning) {
       clearInterval(intervalRef.current);
@@ -39,26 +115,69 @@ function App() {
     intervalRef.current = setInterval(() => {
       setSecondsLeft((prev) => {
         if (prev <= 1) {
-          clearInterval(intervalRef.current);
-          playBeep();
-          setIsRunning(false);
-          return 0;
+          // Session finishes here
+          const wasFocus = mode === "focus";
+
+          // Count individual focus sessions
+          if (wasFocus) {
+            setFocusSessionsCompleted((c) => c + 1);
+          }
+
+          playEndBeep();
+
+          // Move to next step in the pattern
+          const patternLength = pattern.length || 1;
+          const nextIndex = (stepIndex + 1) % patternLength;
+          const completedFullCycle = nextIndex === 0; // wrapped around
+
+          if (completedFullCycle) {
+            setCyclesCompleted((c) => c + 1);
+          }
+
+          const nextMode = pattern[nextIndex] || "focus";
+
+          // Update step index and mode
+          setStepIndex(nextIndex);
+          setMode(nextMode);
+
+          // Start next session automatically
+          return durations[nextMode] * 60;
         }
+
         return prev - 1;
       });
     }, 1000);
 
-    // Cleanup: runs when component unmounts or effect dependencies change
     return () => clearInterval(intervalRef.current);
-  }, [isRunning]);
+  }, [isRunning, mode, stepIndex, pattern, durations]);
 
-  // When mode changes, reset timer to that mode's duration
+  // 🧭 Reset timer whenever mode or durations change (e.g., user edits durations)
   useEffect(() => {
-    setSecondsLeft(durations[mode] * 60);
-    setIsRunning(false);
+    const safeMode = MODE_LABELS[mode] ? mode : "focus";
+    setSecondsLeft(durations[safeMode] * 60);
   }, [mode, durations]);
 
+  // 🔁 Calm sound cues when entering new session types
+  useEffect(() => {
+    const previousMode = previousModeRef.current;
+
+    if (previousMode !== mode) {
+      if (mode === "focus") {
+        playFocusSound();
+      } else {
+        playBreakSound();
+      }
+    }
+
+    previousModeRef.current = mode;
+  }, [mode]);
+
   const handleModeChange = (newMode) => {
+    // Manual override of current step & mode
+    const idx = pattern.indexOf(newMode);
+    if (idx !== -1) {
+      setStepIndex(idx);
+    }
     setMode(newMode);
   };
 
@@ -79,22 +198,48 @@ function App() {
     }));
   };
 
-  const playBeep = () => {
-    // Small inline beep for when a session ends
-    const context = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = context.createOscillator();
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(880, context.currentTime);
-    oscillator.connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + 0.4);
+  // 🧩 Pattern input: "focus, shortBreak, focus, longBreak" etc.
+  const handlePatternInputChange = (e) => {
+    setPatternInput(e.target.value);
+  };
+
+  const normalizeToken = (token) => {
+    const t = token.toLowerCase();
+    if (t === "focus") return "focus";
+    if (t === "short" || t === "shortbreak" || t === "short_break")
+      return "shortBreak";
+    if (t === "long" || t === "longbreak" || t === "long_break")
+      return "longBreak";
+    return null;
+  };
+
+  const handlePatternInputBlur = () => {
+    const rawTokens = patternInput
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    const mapped = rawTokens
+      .map(normalizeToken)
+      .filter((m) => m !== null);
+
+    if (mapped.length === 0) {
+      // Invalid input, revert to current pattern text
+      setPatternInput(pattern.join(", "));
+      return;
+    }
+
+    setPattern(mapped);
+    setStepIndex(0);
+    setMode(mapped[0]);
+    setSecondsLeft(durations[mapped[0]] * 60);
   };
 
   return (
     <div className="app">
       <header className="header">
-        <h1>AIAm Focus Timer</h1>
-        <p className="tagline">Stay in flow with structured focus & breaks.</p>
+        <h1>Focus Timer</h1>
+        <p className="tagline">Structured focus cycles with smart breaks.</p>
       </header>
 
       <main className="main">
@@ -124,22 +269,47 @@ function App() {
               Reset
             </button>
           </div>
+
+          {/* Stats */}
           <p className="hint">
-            Pro tip: use this as <strong>{MODE_LABELS[mode]}</strong> time.
+            Focus blocks completed: <strong>{focusSessionsCompleted}</strong>
+          </p>
+          <p className="hint">
+            Full cycles completed: <strong>{cyclesCompleted}</strong>
           </p>
         </div>
 
-        {/* Duration settings */}
+        {/* Pattern editor */}
         <section className="durations">
-          <h2>Session lengths (minutes)</h2>
+          <h2>Pattern & session lengths</h2>
+
+          <div style={{ marginBottom: "0.9rem" }}>
+            <label className="duration-item">
+              <span>Session pattern</span>
+              <input
+                type="text"
+                value={patternInput}
+                onChange={handlePatternInputChange}
+                onBlur={handlePatternInputBlur}
+                placeholder="focus, short, focus, short, focus, long"
+              />
+            </label>
+            <p className="hint">
+              Default: <code>focus block, short break, focus block, short break, focus block, long break</code>.
+              Allowed values: <code>focus</code>, <code>shortBreak</code>,{" "}
+              <code>longBreak</code>. You can also type <code>short</code> /
+              <code>long</code>.
+            </p>
+          </div>
+
           <div className="duration-grid">
             {Object.keys(MODE_LABELS).map((key) => (
               <label key={key} className="duration-item">
-                <span>{MODE_LABELS[key]}</span>
+                <span>{MODE_LABELS[key]} (minutes)</span>
                 <input
                   type="number"
                   min="1"
-                  max="120"
+                  max="180"
                   value={durations[key]}
                   onChange={(e) => handleDurationChange(key, e.target.value)}
                 />
@@ -148,39 +318,36 @@ function App() {
           </div>
         </section>
 
-        {/* Tips for you as a new React dev */}
-        <section className="tips">
-          <h2>React tips (for future you 👩‍💻👨‍💻)</h2>
-          <ul>
-            <li>
-              <strong>State lives where it’s needed.</strong> The timer state is in <code>App</code>{" "}
-              because multiple parts of the UI depend on it (display, buttons, tips).
-            </li>
-            <li>
-              <strong>useEffect = reacting to changes.</strong> The timer interval is set up in a{" "}
-              <code>useEffect</code> that depends on <code>isRunning</code>. When{" "}
-              <code>isRunning</code> changes, React re-runs the effect and resets the interval.
-            </li>
-            <li>
-              <strong>Derived values = functions, not state.</strong> We don’t store a formatted
-              time string in state; we derive it from <code>secondsLeft</code> using{" "}
-              <code>formatTime()</code>.
-            </li>
-            <li>
-              <strong>Small components are easier to test.</strong> When this file starts feeling
-              big, you can extract pieces (e.g., <code>TimerDisplay</code>,{" "}
-              <code>ModeSwitcher</code>) into their own components.
-            </li>
-            <li>
-              <strong>Start simple, then refactor.</strong> It’s totally fine to write “one big
-              component” first, then break it up as new requirements show up.
-            </li>
-          </ul>
-        </section>
+        {/* Tips for future you */}
+        {/*<section className="tips">*/}
+        {/*  <h2>React tips (for future you 👩‍💻👨‍💻)</h2>*/}
+        {/*  <ul>*/}
+        {/*    <li>*/}
+        {/*      <strong>Patterns as data.</strong> The sequence is just an array of*/}
+        {/*      mode keys (<code>["focus","shortBreak",...]</code>). That makes it*/}
+        {/*      easy to let users customize it.*/}
+        {/*    </li>*/}
+        {/*    <li>*/}
+        {/*      <strong>Automatic flows via state.</strong> Advancing the pattern*/}
+        {/*      when the timer hits zero is just updating <code>stepIndex</code>{" "}*/}
+        {/*      and <code>mode</code> inside a single effect.*/}
+        {/*    </li>*/}
+        {/*    <li>*/}
+        {/*      <strong>Validation at the edges.</strong> The pattern input parses*/}
+        {/*      free text, normalizes it, and falls back gracefully if the input*/}
+        {/*      is invalid.*/}
+        {/*    </li>*/}
+        {/*    <li>*/}
+        {/*      <strong>Different levels of counting.</strong> You now track both*/}
+        {/*      individual focus blocks and full cycles, which you can later*/}
+        {/*      visualize as stats or charts.*/}
+        {/*    </li>*/}
+        {/*  </ul>*/}
+        {/*</section>*/}
       </main>
 
       <footer className="footer">
-        <small>Built with React & Python • AIAm Focus Timer</small>
+        <small>Built with React & Python • Focus Timer</small>
       </footer>
     </div>
   );
