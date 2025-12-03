@@ -16,11 +16,11 @@ const MODE_LABELS = {
 // 🔁 Default pattern: focus → short break → focus → short break → focus → long break
 const DEFAULT_PATTERN = [
   "focus",
-  "shortBreak",
+  "short",
   "focus",
-  "shortBreak",
+  "short",
   "focus",
-  "longBreak",
+  "long",
 ];
 
 function formatTime(totalSeconds) {
